@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="id" class="">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard Termovisi UPT Probolinggo</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    
+    <script>
+      tailwind.config = {
+        darkMode: 'class',
+        theme: {
+          extend: {
+              colors: {
+                  'pln-blue': '#2563eb',
+              }
+          }
+        }
+      }
+    </script>
+    
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body class="bg-[#f4f6f9] dark:bg-slate-900 transition-colors duration-300 font-sans">
+    
+    <div id="root"></div>
+
+    <script type="text/babel" data-presets="react,env">
+        const { useState, useEffect } = React;
+
+        const SPREADSHEET_CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vShldBvCN8_xdns1rbXiGwqgdNkfT1K1BFtagsT9wB3XStky8eSxV47YQJcFIdzTLvDBasIcjtUFrJ_/pub?output=csv'; 
+
+        function App() {
+            const [rawData, setRawData] = useState([]);
+            const [termoData, setTermoData] = useState([]);
+            const [tableHeaders, setTableHeaders] = useState([]); // State baru untuk Judul Kolom Spesifik
+            const [expandedUltg, setExpandedUltg] = useState({});
+            const [isLoading, setIsLoading] = useState(true);
+            const [isDarkMode, setIsDarkMode] = useState(false);
+            const [tableUltgFilter, setTableUltgFilter] = useState('ALL');
+            const [tableStatusFilter, setTableStatusFilter] = useState('ALL');
+
+            useEffect(() => {
+                isDarkMode ? document.documentElement.classList.add('dark') : document.documentElement.classList.remove('dark');
+            }, [isDarkMode]);
+
+            const parseCSVRow = (str) => {
+                let arr = []; let quote = false; let col = '';
+                for (let i = 0; i < str.length; i++) {
+                    let cc = str[i], nc = str[i+1];
+                    if (cc === '"' && quote && nc === '"') { col += cc; i++; continue; }
+                    if (cc === '"') { quote = !quote; continue; }
+                    if (cc === ',' && !quote) { arr.push(col.trim()); col = ''; continue; }
+                    col += cc;
+                }
+                arr.push(col.trim());
+                return arr;
+            };
+
+            useEffect(() => {
+                fetch(`${SPREADSHEET_CSV_URL}&_t=${new Date().getTime()}`)
+                  .then(r => r.text())
+                  .then(text => {
+                    const rows = text.split(/\r?\n/).filter(line => line.trim() !== '').map(l => parseCSVRow(l));
+                    const headers = rows[0];
+                    
+                    // MENGUNCI KOLOM: C(2), D(3), E(4), F(5), G(6), I(8), J(9), K(10), L(11)
+                    const targetIndices = [2, 3, 4, 5, 6, 8, 9, 10, 11];
+                    
+                    // Mengambil nama judul (header) otomatis dari kolom-kolom yang dikunci
+                    setTableHeaders(targetIndices.map(i => headers[i] ? headers[i].toUpperCase() : "-"));
+
+                    // Pencarian index dinamis HANYA untuk kebutuhan perhitungan Ringkasan/Card di atas
+                    const idxUltg = headers.findIndex(h => h.toLowerCase().includes('ultg') || h.toLowerCase().includes('pemilik'));
+                    const idxGi = headers.findIndex(h => h.toLowerCase().includes('gardu') || h.toLowerCase().includes('gi'));
+                    const idxStatus = headers.findIndex(h => h.toLowerCase().includes('status'));
+
+                    const parsedData = rows.slice(1).map((r, i) => {
+                        // Logika untuk menentukan status grafik dasbor
+                        let currentStatus = 'BELUM';
+                        if (idxStatus !== -1 && r[idxStatus]) {
+                            currentStatus = r[idxStatus].toUpperCase().includes('SUDAH') ? 'SUDAH' : 'BELUM';
+                        }
+
+                        return {
+                            id: i,
+                            ultg: idxUltg !== -1 ? r[idxUltg] : (r[2] || ""), 
+                            gi: idxGi !== -1 ? r[idxGi] : (r[3] || ""),       
+                            status: currentStatus,
+                            
+                            // MENGAMBIL DATA HANYA UNTUK KOLOM YANG DIKUNCI (Tabel Detail Bawah)
+                            tableCols: targetIndices.map(idx => r[idx] || "-")
+                        };
+                    }).filter(d => d.ultg !== "");
+                    setRawData(parsedData);
+                  })
+                  .finally(() => setIsLoading(false));
+            }, []);
+
+            useEffect(() => {
+                const ultgMap = {};
+                // Daftar ULTG yang diizinkan (FILTER KETAT)
+                const allowedUltgs = ["ULTG JEMBER", "ULTG PROBOLINGGO", "ULTG BANGIL"];
+
+                rawData.forEach(item => {
+                    let ultgName = item.ultg.trim().toUpperCase();
+                    if(!ultgName.includes("ULTG")) ultgName = "ULTG " + ultgName;
+
+                    // FILTER: Abaikan jika tidak termasuk 3 ULTG tersebut
+                    if (!allowedUltgs.includes(ultgName)) return;
+
+                    if (!ultgMap[ultgName]) {
+                        ultgMap[ultgName] = { id: ultgName.replace(/\s+/g, '-').toLowerCase(), name: ultgName, total: 0, sudah: 0, garduIndukMap: {} };
+                    }
+                    
+                    const isSudah = item.status === 'SUDAH';
+                    ultgMap[ultgName].total += 1;
+                    if(isSudah) ultgMap[ultgName].sudah += 1;
+
+                    const giName = item.gi.trim().toUpperCase();
+                    if (!ultgMap[ultgName].garduIndukMap[giName]) {
+                        ultgMap[ultgName].garduIndukMap[giName] = { nama: giName, total: 0, sudah: 0 };
+                    }
+                    ultgMap[ultgName].garduIndukMap[giName].total += 1;
+                    if(isSudah) ultgMap[ultgName].garduIndukMap[giName].sudah += 1;
+                });
+
+                const extractedData = Object.values(ultgMap).map((group, index) => {
+                    group.percentage = group.total > 0 ? Math.round((group.sudah / group.total) * 100) : 0;
+                    group.color = ['blue', 'emerald', 'amber'][index % 3];
+                    group.garduInduk = Object.values(group.garduIndukMap).map(gi => ({
+                        ...gi, persentase: gi.total > 0 ? Math.round((gi.sudah / gi.total) * 100) : 0
+                    }));
+                    return group;
+                });
+
+                setTermoData(extractedData);
+            }, [rawData]);
+
+            // Filter Tabel
+            let filteredTableData = rawData.filter(d => {
+                let ultgMatch = tableUltgFilter === 'ALL' || (d.ultg.toUpperCase().includes(tableUltgFilter.replace('ULTG ', '')));
+                let statusMatch = tableStatusFilter === 'ALL' || d.status === tableStatusFilter;
+                return ultgMatch && statusMatch;
+            });
+
+            return (
+                <div className="p-8">
+                    <header className="mb-8 flex justify-between items-center">
+                        <h1 className="text-2xl font-bold">Dashboard Termovisi UPT Probolinggo</h1>
+                        <button onClick={() => setIsDarkMode(!isDarkMode)} className="px-4 py-2 bg-slate-200 rounded-lg">Toggle Theme</button>
+                    </header>
+
+                    {/* Ringkasan */}
+                    <section className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+                        {termoData.map(u => (
+                            <div key={u.id} className="bg-white p-6 rounded-2xl shadow border-l-4 border-blue-500">
+                                <p className="font-bold text-slate-500">{u.name}</p>
+                                <p className="text-5xl font-black my-2">{u.percentage}%</p>
+                                <p className="text-sm">Total: {u.total} Titik</p>
+                            </div>
+                        ))}
+                    </section>
+
+                    {/* Tabel */}
+                    <section className="bg-white p-6 rounded-2xl shadow border border-slate-200">
+                        <div className="flex justify-between items-center mb-6">
+                            <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-blue-500"><line x1="8" y1="6" x2="21" y2="6"></line><line x1="8" y1="12" x2="21" y2="12"></line><line x1="8" y1="18" x2="21" y2="18"></line><line x1="3" y1="6" x2="3.01" y2="6"></line><line x1="3" y1="12" x2="3.01" y2="12"></line><line x1="3" y1="18" x2="3.01" y2="18"></line></svg>
+                                Detail Data Titik Termovisi
+                            </h2>
+                            <select onChange={(e) => setTableUltgFilter(e.target.value)} className="border border-slate-300 p-2 rounded-lg bg-slate-50 font-semibold text-slate-700 focus:outline-none focus:border-blue-500">
+                               <option value="ALL">Semua ULTG</option>
+                               <option value="JEMBER">ULTG Jember</option>
+                               <option value="PROBOLINGGO">ULTG Probolinggo</option>
+                               <option value="BANGIL">ULTG Bangil</option>
+                           </select>
+                        </div>
+                        <div className="overflow-x-auto rounded-xl border border-slate-200">
+                            <table className="w-full text-left min-w-[1000px]">
+                                <thead className="bg-slate-50 text-slate-500 uppercase text-[10px] font-bold tracking-wider">
+                                    <tr>
+                                        <th className="p-4 border-b border-slate-200">NO</th>
+                                        {/* Render Judul Kolom Sesuai 9 Kolom Pilihan */}
+                                        {tableHeaders.map((th, idx) => (
+                                            <th key={idx} className="p-4 border-b border-slate-200">{th}</th>
+                                        ))}
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-100 text-sm text-slate-700">
+                                    {filteredTableData.map((row, i) => (
+                                        <tr key={row.id} className="hover:bg-slate-50 transition-colors">
+                                            <td className="p-4 text-slate-400 font-medium">{i + 1}</td>
+                                            {/* Render Isi Data Sesuai 9 Kolom Pilihan */}
+                                            {row.tableCols.map((colData, idx) => {
+                                                const isStatusCol = colData.toUpperCase().trim() === 'SUDAH' || colData.toUpperCase().trim() === 'BELUM';
+                                                return (
+                                                    <td key={idx} className="p-4">
+                                                        {isStatusCol ? (
+                                                            <span className={`px-3 py-1 rounded-full text-[11px] font-bold border ${colData.toUpperCase().trim() === 'SUDAH' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-orange-50 text-orange-700 border-orange-200'}`}>
+                                                                {colData.toUpperCase().trim()}
+                                                            </span>
+                                                        ) : (
+                                                            colData
+                                                        )}
+                                                    </td>
+                                                );
+                                            })}
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    </section>
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
