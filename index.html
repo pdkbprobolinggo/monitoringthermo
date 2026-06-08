@@ -34,11 +34,49 @@
 
         const SPREADSHEET_CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vShldBvCN8_xdns1rbXiGwqgdNkfT1K1BFtagsT9wB3XStky8eSxV47YQJcFIdzTLvDBasIcjtUFrJ_/pub?output=csv'; 
 
+        // --- Logika Cerdas Pengecekan Tanggal (Exp > 120 Hari) ---
+        const isExpired = (dateStr) => {
+            if (!dateStr || dateStr.trim() === '-' || dateStr.trim() === '') return false;
+            
+            let d = null;
+            
+            // Coba format DD/MM/YYYY atau DD-MM-YYYY
+            let match = dateStr.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+            if (match) {
+                d = new Date(parseInt(match[3]), parseInt(match[2])-1, parseInt(match[1]));
+            } else {
+                // Coba format Indonesia: DD Bulan YYYY (misal: 12 Juni 2024)
+                const months = { 'januari':0, 'jan':0, 'februari':1, 'feb':1, 'maret':2, 'mar':2, 'april':3, 'apr':3, 'mei':4, 'juni':5, 'jun':5, 'juli':6, 'jul':6, 'agustus':7, 'agu':7, 'september':8, 'sep':8, 'oktober':9, 'okt':9, 'november':10, 'nov':10, 'desember':11, 'des':11 };
+                let parts = dateStr.toLowerCase().replace(/,/g, '').split(/\s+/);
+                if(parts.length >= 3) {
+                    let day = parseInt(parts[0]);
+                    let month = months[parts[1]];
+                    let year = parseInt(parts[2]);
+                    if(!isNaN(day) && month !== undefined && !isNaN(year)) {
+                        d = new Date(year, month, day);
+                    }
+                } else {
+                    // Fallback ke pembacaan default JS (seperti YYYY-MM-DD)
+                    let parsed = new Date(dateStr);
+                    if (!isNaN(parsed.getTime())) d = parsed;
+                }
+            }
+            
+            // Jika berhasil dijadikan format waktu, hitung selisihnya dari hari ini
+            if (d && !isNaN(d.getTime())) {
+                const now = new Date();
+                const diffTime = now - d;
+                const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+                return diffDays > 120; // TRUE jika lebih dari 120 hari
+            }
+            return false;
+        };
+
         function App() {
             const [rawData, setRawData] = useState([]);
             const [termoData, setTermoData] = useState([]);
-            const [csvHeaders, setCsvHeaders] = useState([]); // State untuk menyimpan header CSV asli
-            const [viewType, setViewType] = useState('TOWER'); // State Toggle (TOWER / MIDSPAN)
+            const [csvHeaders, setCsvHeaders] = useState([]); 
+            const [viewType, setViewType] = useState('TOWER'); 
             const [expandedUltg, setExpandedUltg] = useState({});
             const [isLoading, setIsLoading] = useState(true);
             const [isDarkMode, setIsDarkMode] = useState(false);
@@ -68,15 +106,13 @@
                   .then(text => {
                     const rows = text.split(/\r?\n/).filter(line => line.trim() !== '').map(l => parseCSVRow(l));
                     const headers = rows[0];
-                    setCsvHeaders(headers); // Simpan semua judul kolom asli
+                    setCsvHeaders(headers); 
                     
-                    // Pencarian index dinamis HANYA untuk kebutuhan perhitungan Ringkasan/Card di atas
                     const idxUltg = headers.findIndex(h => h.toLowerCase().includes('ultg') || h.toLowerCase().includes('pemilik'));
                     const idxGi = headers.findIndex(h => h.toLowerCase().includes('gardu') || h.toLowerCase().includes('gi'));
                     const idxStatus = headers.findIndex(h => h.toLowerCase().includes('status'));
 
                     const parsedData = rows.slice(1).map((r, i) => {
-                        // Logika untuk menentukan status grafik dasbor
                         let currentStatus = 'BELUM';
                         if (idxStatus !== -1 && r[idxStatus]) {
                             currentStatus = r[idxStatus].toUpperCase().includes('SUDAH') ? 'SUDAH' : 'BELUM';
@@ -87,8 +123,6 @@
                             ultg: idxUltg !== -1 ? r[idxUltg] : (r[2] || ""), 
                             gi: idxGi !== -1 ? r[idxGi] : (r[3] || ""),       
                             status: currentStatus,
-                            
-                            // SIMPAN BARIS ASLI UTUH UNTUK DIOLAH DINAMIS BERDASARKAN TOGGLE
                             rawRow: r
                         };
                     }).filter(d => d.ultg !== "");
@@ -99,14 +133,12 @@
 
             useEffect(() => {
                 const ultgMap = {};
-                // Daftar ULTG yang diizinkan (FILTER KETAT)
                 const allowedUltgs = ["ULTG JEMBER", "ULTG PROBOLINGGO", "ULTG BANGIL"];
 
                 rawData.forEach(item => {
                     let ultgName = item.ultg.trim().toUpperCase();
                     if(!ultgName.includes("ULTG")) ultgName = "ULTG " + ultgName;
 
-                    // FILTER: Abaikan jika tidak termasuk 3 ULTG tersebut
                     if (!allowedUltgs.includes(ultgName)) return;
 
                     if (!ultgMap[ultgName]) {
@@ -137,27 +169,26 @@
                 setTermoData(extractedData);
             }, [rawData]);
 
-            // Filter Tabel
             let filteredTableData = rawData.filter(d => {
                 let ultgMatch = tableUltgFilter === 'ALL' || (d.ultg.toUpperCase().includes(tableUltgFilter.replace('ULTG ', '')));
                 let statusMatch = tableStatusFilter === 'ALL' || d.status === tableStatusFilter;
                 return ultgMatch && statusMatch;
             });
 
-            // Logika Kolom Dinamis Berdasarkan Toggle TOWER vs MIDSPAN
-            // Kolom Tower (9 kolom): C(2), D(3), E(4), F(5), G(6), I(8), J(9), K(10), L(11)
             const towerIndices = [2, 3, 4, 5, 6, 8, 9, 10, 11];
-            // Kolom Midspan (8 kolom, hilangkan I(8)): C(2), D(3), E(4), F(5), G(6), J(9), K(10), L(11)
             const midspanIndices = [2, 3, 4, 5, 6, 9, 10, 11];
             
             const currentIndices = viewType === 'TOWER' ? towerIndices : midspanIndices;
             const currentHeaders = currentIndices.map(i => csvHeaders[i] ? csvHeaders[i].toUpperCase() : "-");
 
+            // Mencari indeks kolom yang mengandung kata "TANGGAL" untuk mengecek kadaluarsa
+            const dateColIndices = currentIndices.filter(colIdx => csvHeaders[colIdx] && csvHeaders[colIdx].toUpperCase().includes('TANGGAL'));
+
             return (
                 <div className="p-8">
                     <header className="mb-8 flex justify-between items-center">
                         <h1 className="text-2xl font-bold">Dashboard Termovisi UPT Probolinggo</h1>
-                        <button onClick={() => setIsDarkMode(!isDarkMode)} className="px-4 py-2 bg-slate-200 rounded-lg">Toggle Theme</button>
+                        <button onClick={() => setIsDarkMode(!isDarkMode)} className="px-4 py-2 bg-slate-200 rounded-lg hover:bg-slate-300 transition-colors font-semibold">Toggle Theme</button>
                     </header>
 
                     {/* Ringkasan */}
@@ -180,7 +211,6 @@
                             </h2>
                             
                             <div className="flex flex-col sm:flex-row gap-3 w-full md:w-auto">
-                                {/* Toggle Jenis Termovisi */}
                                 <div className="bg-slate-100 dark:bg-slate-800 p-1 rounded-lg inline-flex shadow-inner">
                                     <button 
                                         onClick={() => setViewType('TOWER')} 
@@ -196,7 +226,7 @@
                                     </button>
                                 </div>
 
-                                <select onChange={(e) => setTableUltgFilter(e.target.value)} className="border border-slate-300 p-2 rounded-lg bg-slate-50 font-semibold text-slate-700 focus:outline-none focus:border-blue-500 text-sm">
+                                <select onChange={(e) => setTableUltgFilter(e.target.value)} className="border border-slate-300 p-2 rounded-lg bg-slate-50 font-semibold text-slate-700 focus:outline-none focus:border-blue-500 text-sm cursor-pointer hover:bg-slate-100 transition-colors">
                                    <option value="ALL">Semua ULTG</option>
                                    <option value="JEMBER">ULTG Jember</option>
                                    <option value="PROBOLINGGO">ULTG Probolinggo</option>
@@ -209,7 +239,6 @@
                                 <thead className="bg-slate-50 text-slate-500 uppercase text-[10px] font-bold tracking-wider">
                                     <tr>
                                         <th className="p-4 border-b border-slate-200">NO</th>
-                                        {/* Render Judul Kolom Dinamis Berdasarkan Toggle */}
                                         {currentHeaders.map((th, idx) => (
                                             <th key={idx} className="p-4 border-b border-slate-200">{th}</th>
                                         ))}
@@ -219,10 +248,14 @@
                                     {filteredTableData.map((row, i) => (
                                         <tr key={row.id} className="hover:bg-slate-50 transition-colors">
                                             <td className="p-4 text-slate-400 font-medium">{i + 1}</td>
-                                            {/* Render Isi Data Dinamis */}
                                             {currentIndices.map((colIdx, idx) => {
                                                 const colData = row.rawRow[colIdx] || "-";
                                                 const isStatusCol = colData.toUpperCase().trim() === 'SUDAH' || colData.toUpperCase().trim() === 'BELUM';
+                                                
+                                                // Cek apakah kolom ini adalah kolom Tanggal dan usianya > 120 hari
+                                                const isDateCol = dateColIndices.includes(colIdx);
+                                                const isWarning = isDateCol && isExpired(colData);
+
                                                 return (
                                                     <td key={idx} className="p-4">
                                                         {isStatusCol ? (
@@ -230,7 +263,18 @@
                                                                 {colData.toUpperCase().trim()}
                                                             </span>
                                                         ) : (
-                                                            colData
+                                                            <div className="flex items-center">
+                                                                {colData}
+                                                                {/* Menampilkan Icon Jam Kuning jika sudah lebih dari 120 Hari */}
+                                                                {isWarning && (
+                                                                    <div className="relative group ml-2 flex items-center">
+                                                                        <i className="fas fa-clock text-amber-500 animate-pulse text-base cursor-help"></i>
+                                                                        <span className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 w-max px-2 py-1 bg-slate-800 text-white text-[10px] font-semibold rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+                                                                            Data lebih dari 120 hari
+                                                                        </span>
+                                                                    </div>
+                                                                )}
+                                                            </div>
                                                         )}
                                                     </td>
                                                 );
