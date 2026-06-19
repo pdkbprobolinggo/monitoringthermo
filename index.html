@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="id" class="">
+<html lang="id">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -7,387 +7,185 @@
     
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    <!-- Font Awesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
     
-    <!-- Leaflet CSS (Untuk Peta Dinamis) -->
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
-    
-    <script>
-      tailwind.config = {
-        darkMode: 'class',
-        theme: {
-          extend: {
-              colors: {
-                  'pln-blue': '#2563eb',
-              }
-          }
-        }
-      }
-    </script>
-    
-    <!-- React & Babel & PapaParse & Leaflet JS -->
-    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- Pustaka Dasar (React, Babel, PapaParse, Leaflet) -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+    <!-- Menggunakan versi Babel yang dipatok stabil untuk menghindari error modul otomatis -->
+    <script src="https://unpkg.com/@babel/standalone@7.23.9/babel.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
-
-    <style>
-        /* Memastikan peta tidak menutupi menu dropdown */
-        .leaflet-container { z-index: 10 !important; font-family: inherit;}
-        .custom-popup .leaflet-popup-content-wrapper { border-radius: 0.75rem; box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1); }
-    </style>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 </head>
-<body class="bg-[#f4f6f9] dark:bg-slate-900 transition-colors duration-300 font-sans">
+<body class="bg-slate-100 p-4 md:p-8 font-sans">
     
     <div id="root"></div>
 
-    <script type="text/babel" data-presets="react,env">
+    <!-- Script Utama -->
+    <script type="text/babel" data-presets="react">
+        /** @jsx React.createElement */
+        /** @jsxFrag React.Fragment */
+        
         const { useState, useEffect, useRef } = React;
 
-        const SPREADSHEET_CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vShldBvCN8_xdns1rbXiGwqgdNkfT1K1BFtagsT9wB3XStky8eSxV47YQJcFIdzTLvDBasIcjtUFrJ_/pub?output=csv'; 
-
-        // Indeks Kolom M = 12 (X/Lat), N = 13 (Y/Lng)
-        const COL_INDEX = {
-            C: 2, D: 3, E: 4, F: 5, G: 6, I: 8, J: 9, K: 10, L: 11, M: 12, N: 13
-        };
-
-        // --- Logika Tanggal 120 Hari ---
-        const isExpired = (dateStr) => {
-            if (!dateStr || dateStr.trim() === '-' || dateStr.trim() === '') return false;
-            let d = null;
-            let match = dateStr.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
-            if (match) {
-                d = new Date(parseInt(match[3]), parseInt(match[2])-1, parseInt(match[1]));
-            } else {
-                const months = { 'januari':0, 'jan':0, 'februari':1, 'feb':1, 'maret':2, 'mar':2, 'april':3, 'apr':3, 'mei':4, 'juni':5, 'jun':5, 'juli':6, 'jul':6, 'agustus':7, 'agu':7, 'september':8, 'sep':8, 'oktober':9, 'okt':9, 'november':10, 'nov':10, 'desember':11, 'des':11 };
-                let parts = dateStr.toLowerCase().replace(/,/g, '').split(/\s+/);
-                if(parts.length >= 3) {
-                    let day = parseInt(parts[0]);
-                    let month = months[parts[1]];
-                    let year = parseInt(parts[2]);
-                    if(!isNaN(day) && month !== undefined && !isNaN(year)) d = new Date(year, month, day);
-                } else {
-                    let parsed = new Date(dateStr);
-                    if (!isNaN(parsed.getTime())) d = parsed;
-                }
-            }
-            
-            if (d && !isNaN(d.getTime())) {
-                const now = new Date();
-                const diffTime = now - d;
-                const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
-                return diffDays > 120;
-            }
-            return false;
-        };
-
-        // --- Ikon Pembuat Titik Peta (Merah/Hijau) ---
-        const createMarkerIcon = (isSudah) => {
-            const color = isSudah ? '#10b981' : '#ef4444'; // Emerald for SUDAH, Red for BELUM
-            const shadow = isSudah ? 'rgba(16, 185, 129, 0.4)' : 'rgba(239, 68, 68, 0.4)';
-            return L.divIcon({
-                className: 'custom-pin-icon',
-                html: `<div style="background-color: ${color}; width: 20px; height: 20px; border-radius: 50%; border: 3px solid white; box-shadow: 0 0 10px ${shadow};"></div>`,
-                iconSize: [20, 20],
-                iconAnchor: [10, 10],
-                popupAnchor: [0, -10]
-            });
-        };
-
         function App() {
-            const [rawData, setRawData] = useState([]);
-            const [termoData, setTermoData] = useState([]);
-            const [csvHeaders, setCsvHeaders] = useState([]); 
-            const [viewType, setViewType] = useState('TOWER'); 
-            const [isLoading, setIsLoading] = useState(true);
-            const [isDarkMode, setIsDarkMode] = useState(false);
-            const [tableUltgFilter, setTableUltgFilter] = useState('ALL');
+            const [data, setData] = useState([]);
+            const [stats, setStats] = useState([]);
+            const [loading, setLoading] = useState(true);
             
-            // Ref Peta Leaflet
+            // Pengaman Peta agar tidak error
             const mapRef = useRef(null);
-            const markersLayerRef = useRef(null);
+            const layerRef = useRef(null);
+            const mapContainerRef = useRef(null);
 
+            // 1. Tarik Data CSV
             useEffect(() => {
-                isDarkMode ? document.documentElement.classList.add('dark') : document.documentElement.classList.remove('dark');
-            }, [isDarkMode]);
-
-            // --- INISIALISASI PETA LEAFLET ---
-            useEffect(() => {
-                if (!mapRef.current) {
-                    // Posisi default Jawa Timur
-                    mapRef.current = L.map('map-container').setView([-7.7569, 113.2155], 9);
-                    L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
-                        attribution: '&copy; OpenStreetMap &copy; CARTO'
-                    }).addTo(mapRef.current);
-
-                    markersLayerRef.current = L.featureGroup().addTo(mapRef.current);
-                }
+                const csvUrl = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vShldBvCN8_xdns1rbXiGwqgdNkfT1K1BFtagsT9wB3XStky8eSxV47YQJcFIdzTLvDBasIcjtUFrJ_/pub?output=csv&_t=' + Date.now();
+                
+                fetch(csvUrl)
+                    .then(res => res.text())
+                    .then(csv => {
+                        Papa.parse(csv, {
+                            skipEmptyLines: true,
+                            complete: (res) => {
+                                // Ambil data mulai dari baris ke-2 (melewati judul)
+                                const validRows = res.data.slice(1).filter(r => r.length > 5);
+                                setData(validRows);
+                                setLoading(false);
+                            }
+                        });
+                    })
+                    .catch(err => {
+                        console.error("Gagal menarik data:", err);
+                        setLoading(false);
+                    });
             }, []);
 
-            // Tarik Data CSV
+            // 2. Kalkulasi Ringkasan ULTG
             useEffect(() => {
-                fetch(`${SPREADSHEET_CSV_URL}&_t=${new Date().getTime()}`)
-                  .then(r => r.text())
-                  .then(text => {
-                    Papa.parse(text, {
-                        header: false,
-                        skipEmptyLines: true,
-                        complete: (results) => {
-                            const rows = results.data;
-                            if(rows.length > 0) {
-                                const headers = rows[0];
-                                setCsvHeaders(headers); 
-                                
-                                const idxUltg = headers.findIndex(h => h.toLowerCase().includes('ultg') || h.toLowerCase().includes('pemilik'));
-                                const idxGi = headers.findIndex(h => h.toLowerCase().includes('gardu') || h.toLowerCase().includes('gi'));
-                                const idxStatus = headers.findIndex(h => h.toLowerCase().includes('status'));
+                const counts = { 
+                    "ULTG JEMBER": { total: 0, sudah: 0 }, 
+                    "ULTG PROBOLINGGO": { total: 0, sudah: 0 }, 
+                    "ULTG BANGIL": { total: 0, sudah: 0 } 
+                };
+                
+                data.forEach(row => {
+                    const text = row.join(' ').toUpperCase();
+                    let area = null;
+                    
+                    if (text.includes("JEMBER")) area = "ULTG JEMBER";
+                    else if (text.includes("PROBOLINGGO")) area = "ULTG PROBOLINGGO";
+                    else if (text.includes("BANGIL")) area = "ULTG BANGIL";
 
-                                const parsedData = rows.slice(1).map((r, i) => {
-                                    let currentStatus = 'BELUM';
-                                    if (idxStatus !== -1 && r[idxStatus]) {
-                                        currentStatus = r[idxStatus].toUpperCase().includes('SUDAH') ? 'SUDAH' : 'BELUM';
-                                    }
+                    if (area) {
+                        counts[area].total++;
+                        // Cek status SUDAH dari keseluruhan teks di baris tersebut
+                        if (text.includes("SUDAH")) {
+                            counts[area].sudah++;
+                        }
+                    }
+                });
 
-                                    return {
-                                        id: i,
-                                        ultg: idxUltg !== -1 ? r[idxUltg] : (r[2] || ""), 
-                                        gi: idxGi !== -1 ? r[idxGi] : (r[3] || ""),       
-                                        status: currentStatus,
-                                        rawRow: r
-                                    };
-                                }).filter(d => d.ultg !== "");
-                                setRawData(parsedData);
-                            }
+                const statsArray = Object.keys(counts).map(key => ({
+                    name: key,
+                    total: counts[key].total,
+                    sudah: counts[key].sudah,
+                    pct: counts[key].total > 0 ? Math.round((counts[key].sudah / counts[key].total) * 100) : 0
+                }));
+                
+                setStats(statsArray);
+            }, [data]);
+
+            // 3. Render Peta & Titik Koordinat
+            useEffect(() => {
+                // Buat peta hanya sekali saat wadahnya sudah siap
+                if (mapContainerRef.current && !mapRef.current) {
+                    mapRef.current = L.map(mapContainerRef.current).setView([-7.75, 113.21], 8);
+                    L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png').addTo(mapRef.current);
+                    layerRef.current = L.layerGroup().addTo(mapRef.current);
+                }
+
+                // Tambahkan titik-titik ke peta
+                if (layerRef.current && data.length > 0) {
+                    layerRef.current.clearLayers();
+                    
+                    data.forEach(row => {
+                        // Ambil koordinat di kolom M (12) dan N (13)
+                        const latStr = String(row[12] || '').replace(',', '.');
+                        const lngStr = String(row[13] || '').replace(',', '.');
+                        
+                        const lat = parseFloat(latStr);
+                        const lng = parseFloat(lngStr);
+
+                        if (!isNaN(lat) && !isNaN(lng)) {
+                            // Tentukan status dari Kolom K (10)
+                            const status = (row[10] || '').toUpperCase().includes('SUDAH') ? 'SUDAH' : 'BELUM';
+                            const color = status === 'SUDAH' ? '#10b981' : '#ef4444'; // Hijau atau Merah
+                            
+                            const icon = L.divIcon({
+                                className: 'custom-icon',
+                                html: `<div style="background-color: ${color}; width: 16px; height: 16px; border-radius: 50%; border: 2px solid white; box-shadow: 0 0 5px rgba(0,0,0,0.4);"></div>`,
+                                iconSize: [16, 16],
+                                iconAnchor: [8, 8]
+                            });
+
+                            // Ambil nama Tower dari Kolom E (4)
+                            const towerInfo = row[4] || '-';
+                            
+                            L.marker([lat, lng], { icon })
+                             .bindPopup(`<b>Tower ${towerInfo}</b><br>Status: ${status}`)
+                             .addTo(layerRef.current);
                         }
                     });
-                  })
-                  .finally(() => setIsLoading(false));
-            }, []);
-
-            // Hitung Ringkasan Kartu
-            useEffect(() => {
-                const ultgMap = {};
-                const allowedUltgs = ["ULTG JEMBER", "ULTG PROBOLINGGO", "ULTG BANGIL"];
-
-                rawData.forEach(item => {
-                    let ultgName = item.ultg.trim().toUpperCase();
-                    if(!ultgName.includes("ULTG")) ultgName = "ULTG " + ultgName;
-                    if (!allowedUltgs.includes(ultgName)) return;
-
-                    if (!ultgMap[ultgName]) {
-                        ultgMap[ultgName] = { id: ultgName.replace(/\s+/g, '-').toLowerCase(), name: ultgName, total: 0, sudah: 0 };
-                    }
-                    
-                    const isSudah = item.status === 'SUDAH';
-                    ultgMap[ultgName].total += 1;
-                    if(isSudah) ultgMap[ultgName].sudah += 1;
-                });
-
-                const extractedData = Object.values(ultgMap).map((group, index) => {
-                    group.percentage = group.total > 0 ? Math.round((group.sudah / group.total) * 100) : 0;
-                    return group;
-                });
-
-                setTermoData(extractedData);
-            }, [rawData]);
-
-            // Data Tabel yang Tampil (Berubah jika ULTG Filter diubah)
-            let filteredTableData = rawData.filter(d => {
-                return tableUltgFilter === 'ALL' || (d.ultg.toUpperCase().includes(tableUltgFilter.replace('ULTG ', '')));
-            });
-
-            // --- UPDATE TITIK PETA SETIAP KALI FILTER BERUBAH ---
-            useEffect(() => {
-                if (!mapRef.current || !markersLayerRef.current) return;
-                
-                // Bersihkan titik lama
-                markersLayerRef.current.clearLayers();
-                let hasValidMarkers = false;
-
-                filteredTableData.forEach(item => {
-                    let rawX = item.rawRow[COL_INDEX.M];
-                    let rawY = item.rawRow[COL_INDEX.N];
-
-                    if (rawX && rawY && rawX.trim() !== '' && rawY.trim() !== '') {
-                        // Ganti koma jadi titik untuk parsing JS
-                        let val1 = parseFloat(rawX.replace(',', '.'));
-                        let val2 = parseFloat(rawY.replace(',', '.'));
-
-                        if (!isNaN(val1) && !isNaN(val2)) {
-                            // Smart Detector (Biasanya Longitude ratusan > 100, Latitude minus)
-                            let lat, lng;
-                            if (Math.abs(val1) > Math.abs(val2)) {
-                                lng = val1; lat = val2; // X adalah Longitude
-                            } else {
-                                lat = val1; lng = val2; // Terbalik
-                            }
-
-                            hasValidMarkers = true;
-                            // Status kita ambil dari Kolom K (Indeks 10) sesuai instruksi Anda
-                            const statusData = item.rawRow[10] ? item.rawRow[10].toUpperCase().trim() : 'BELUM';
-                            const isSudah = statusData === 'SUDAH';
-                            
-                            // Mengambil data spesifik: Kolom E (Indeks 4) dan Kolom F (Indeks 5)
-                            const dataKolomE = item.rawRow[4] || '-';
-                            const dataKolomF = item.rawRow[5] || '-';
-                            const dataKolomK = item.rawRow[10] || '-'; // Untuk ditampilkan sebagai teks asli jika perlu
-                            
-                            // Konten Kotak Info (Popup) yang baru sesuai Kolom E, F, dan K
-                            const popupHtml = `
-                                <div class="px-1 py-1 font-sans min-w-[150px]">
-                                    <h3 class="font-black text-[13px] text-slate-800 mb-0.5">${dataKolomE}</h3>
-                                    <p class="text-[11px] font-semibold text-slate-500 mb-2 leading-tight">${dataKolomF}</p>
-                                    <span class="inline-block px-2 py-1 rounded text-[10px] font-bold border shadow-sm ${isSudah ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-red-50 text-red-700 border-red-200'}">
-                                        STATUS: ${dataKolomK}
-                                    </span>
-                                </div>
-                            `;
-
-                            L.marker([lat, lng], { icon: createMarkerIcon(isSudah) })
-                             .bindPopup(popupHtml, { className: 'custom-popup' })
-                             .addTo(markersLayerRef.current);
-                        }
-                    }
-                });
-
-                // Fokuskan Kamera Peta (Zoom Otomatis ke area titik yang tampil)
-                if (hasValidMarkers) {
-                    mapRef.current.fitBounds(markersLayerRef.current.getBounds(), { padding: [50, 50], maxZoom: 14 });
-                } else {
-                    // Jika tidak ada titik, set ke seluruh Jawa Timur
-                    mapRef.current.setView([-7.75, 113.21], 8);
                 }
-            }, [filteredTableData]); // Efek ini dipicu tiap kali filteredTableData berubah!
-
-            const towerIndices = [COL_INDEX.C, COL_INDEX.D, COL_INDEX.E, COL_INDEX.F, COL_INDEX.G, COL_INDEX.I, COL_INDEX.J, COL_INDEX.K, COL_INDEX.L];
-            const midspanIndices = [COL_INDEX.C, COL_INDEX.D, COL_INDEX.E, COL_INDEX.F, COL_INDEX.G, COL_INDEX.J, COL_INDEX.K, COL_INDEX.L];
-            
-            const currentIndices = viewType === 'TOWER' ? towerIndices : midspanIndices;
-            const currentHeaders = currentIndices.map(i => csvHeaders[i] ? csvHeaders[i].toUpperCase() : "-");
-            const dateColIndices = currentIndices.filter(colIdx => csvHeaders[colIdx] && csvHeaders[colIdx].toUpperCase().includes('TANGGAL'));
+            }, [data]);
 
             return (
-                <div className="p-4 md:p-8">
-                    <header className="mb-6 flex flex-col md:flex-row justify-between items-center gap-4">
-                        <div className="flex items-center gap-3">
-                            <div className="bg-blue-600 p-3 rounded-xl shadow-md">
-                                <i className="fas fa-camera-retro text-2xl text-white"></i>
-                            </div>
-                            <div>
-                                <h1 className="text-xl md:text-2xl font-bold text-slate-800 dark:text-slate-100">Dashboard Termovisi</h1>
-                                <p className="text-sm font-medium text-slate-500">UPT Probolinggo - Sistem Peta Cerdas</p>
-                            </div>
+                <div className="max-w-6xl mx-auto space-y-6">
+                    {/* Header Sederhana */}
+                    <header className="bg-white p-5 rounded-xl shadow-sm border border-slate-200 flex items-center gap-4">
+                        <div className="bg-blue-600 text-white w-12 h-12 flex items-center justify-center rounded-lg text-xl">
+                            <i className="fas fa-camera"></i>
                         </div>
-                        <button onClick={() => setIsDarkMode(!isDarkMode)} className="px-4 py-2 bg-slate-200 dark:bg-slate-700 dark:text-white rounded-lg hover:bg-slate-300 transition-colors font-semibold shadow-sm flex items-center gap-2">
-                            <i className={`fas ${isDarkMode ? 'fa-sun text-yellow-400' : 'fa-moon'}`}></i>
-                            {isDarkMode ? 'Light Mode' : 'Dark Mode'}
-                        </button>
+                        <div>
+                            <h1 className="text-2xl font-bold text-slate-800">Dashboard Termovisi</h1>
+                            <p className="text-slate-500 text-sm">UPT Probolinggo - Sistem Stabil</p>
+                        </div>
                     </header>
 
-                    {/* --- PETA DINAMIS LEAFLET --- */}
-                    <section className="mb-6 bg-white dark:bg-slate-800 p-2 md:p-4 rounded-2xl shadow border border-slate-200 dark:border-slate-700">
-                        <div className="flex justify-between items-center mb-3 px-2">
-                            <h2 className="text-lg font-bold text-slate-800 dark:text-slate-200 flex items-center gap-2">
-                                <i className="fas fa-map-marked-alt text-blue-500"></i> Peta Persebaran Titik Termovisi
-                            </h2>
-                            <div className="flex gap-4 text-xs font-bold bg-slate-100 dark:bg-slate-900 px-3 py-2 rounded-lg">
-                                <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-full bg-emerald-500 inline-block"></span> Sudah</span>
-                                <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-full bg-red-500 inline-block"></span> Belum</span>
-                            </div>
+                    {/* Indikator Loading */}
+                    {loading && (
+                        <div className="bg-blue-50 text-blue-600 p-4 rounded-xl flex items-center gap-3">
+                            <i className="fas fa-spinner fa-spin"></i>
+                            <span className="font-medium">Memuat data dari Spreadsheet...</span>
                         </div>
-                        <div id="map-container" className="w-full h-[400px] md:h-[450px] rounded-xl z-0 border border-slate-200 dark:border-slate-600 bg-slate-100"></div>
-                    </section>
+                    )}
 
-                    {/* Ringkasan */}
-                    <section className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-                        {termoData.map(u => (
-                            <div key={u.id} className="bg-white dark:bg-slate-800 p-6 rounded-2xl shadow border-l-4 border-blue-500 relative overflow-hidden group">
-                                <div className="absolute top-0 left-0 h-1 bg-slate-100 dark:bg-slate-700 w-full">
-                                    <div className={`h-full ${u.percentage === 100 ? 'bg-emerald-500' : 'bg-blue-500'}`} style={{ width: `${u.percentage}%` }}></div>
+                    {/* Wadah Peta */}
+                    <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+                        <h2 className="font-bold text-slate-700 mb-3 flex items-center gap-2">
+                            <i className="fas fa-map-marker-alt text-red-500"></i> Peta Titik Termovisi
+                        </h2>
+                        {/* Referensi div langsung ke Leaflet (Anti-Crash) */}
+                        <div ref={mapContainerRef} className="w-full h-[400px] rounded-lg bg-slate-100 border border-slate-300 z-0 relative"></div>
+                    </div>
+
+                    {/* Kartu Ringkasan */}
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                        {stats.map(s => (
+                            <div key={s.name} className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+                                <div className="w-full bg-slate-100 h-1.5 mb-4 rounded-full overflow-hidden">
+                                    <div className="bg-blue-500 h-full" style={{ width: s.pct + '%' }}></div>
                                 </div>
-                                <p className="font-bold text-slate-500 dark:text-slate-400 mt-2">{u.name}</p>
-                                <p className="text-4xl md:text-5xl font-black my-2 dark:text-slate-100">{u.percentage}%</p>
-                                <p className="text-sm dark:text-slate-300">Total: {u.total} Titik</p>
+                                <h3 className="text-sm font-bold text-slate-500">{s.name}</h3>
+                                <p className="text-4xl font-black text-slate-800 my-2">{s.pct}%</p>
+                                <p className="text-sm font-medium text-slate-500">Selesai: {s.sudah} dari {s.total} Titik</p>
                             </div>
                         ))}
-                    </section>
-
-                    {/* Tabel Filter & List */}
-                    <section className="bg-white dark:bg-slate-800 p-4 md:p-6 rounded-2xl shadow border border-slate-200 dark:border-slate-700">
-                        <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
-                            <h2 className="text-xl font-bold text-slate-800 dark:text-slate-200 flex items-center gap-2">
-                                <i className="fas fa-list text-blue-500"></i> Detail Data & Filter Peta
-                            </h2>
-                            
-                            <div className="flex flex-col sm:flex-row gap-3 w-full md:w-auto">
-                                <div className="bg-slate-100 dark:bg-slate-900 p-1 rounded-lg inline-flex shadow-inner">
-                                    <button onClick={() => setViewType('TOWER')} className={`px-4 py-1.5 rounded-md text-xs font-bold transition-all duration-300 ${viewType === 'TOWER' ? 'bg-white dark:bg-slate-700 text-blue-600 shadow-sm' : 'text-slate-500 dark:text-slate-400'}`}>TOWER</button>
-                                    <button onClick={() => setViewType('MIDSPAN')} className={`px-4 py-1.5 rounded-md text-xs font-bold transition-all duration-300 ${viewType === 'MIDSPAN' ? 'bg-white dark:bg-slate-700 text-blue-600 shadow-sm' : 'text-slate-500 dark:text-slate-400'}`}>MIDSPAN JOINT</button>
-                                </div>
-
-                                {/* DROP DOWN INI YANG MENGENDALIKAN PETA JUGA */}
-                                <select onChange={(e) => setTableUltgFilter(e.target.value)} className="border border-slate-300 dark:border-slate-600 p-2 rounded-lg bg-slate-50 dark:bg-slate-700 font-semibold text-slate-700 dark:text-slate-200 focus:outline-none focus:border-blue-500 text-sm cursor-pointer hover:bg-slate-100 transition-colors">
-                                   <option value="ALL">Semua ULTG</option>
-                                   <option value="JEMBER">ULTG Jember</option>
-                                   <option value="PROBOLINGGO">ULTG Probolinggo</option>
-                                   <option value="BANGIL">ULTG Bangil</option>
-                               </select>
-                            </div>
-                        </div>
-                        
-                        {isLoading ? (
-                            <div className="py-20 text-center"><i className="fas fa-circle-notch fa-spin text-3xl text-blue-500"></i></div>
-                        ) : (
-                            <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-700">
-                                <table className="w-full text-left min-w-[1000px]">
-                                    <thead className="bg-slate-50 dark:bg-slate-900 text-slate-500 dark:text-slate-400 uppercase text-[10px] font-bold tracking-wider">
-                                        <tr>
-                                            <th className="p-4 border-b border-slate-200 dark:border-slate-700">NO</th>
-                                            {currentHeaders.map((th, idx) => (
-                                                <th key={idx} className="p-4 border-b border-slate-200 dark:border-slate-700">{th}</th>
-                                            ))}
-                                        </tr>
-                                    </thead>
-                                    <tbody className="divide-y divide-slate-100 dark:divide-slate-700 text-sm text-slate-700 dark:text-slate-300">
-                                        {filteredTableData.map((row, i) => (
-                                            <tr key={row.id} className="hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors">
-                                                <td className="p-4 text-slate-400 font-medium">{i + 1}</td>
-                                                {currentIndices.map((colIdx, idx) => {
-                                                    const colData = row.rawRow[colIdx] || "-";
-                                                    const isStatusCol = colData.toUpperCase().trim() === 'SUDAH' || colData.toUpperCase().trim() === 'BELUM';
-                                                    const isDateCol = dateColIndices.includes(colIdx);
-                                                    const isWarning = isDateCol && isExpired(colData);
-
-                                                    return (
-                                                        <td key={idx} className="p-4">
-                                                            {isStatusCol ? (
-                                                                <span className={`px-3 py-1 rounded-full text-[11px] font-bold border ${colData.toUpperCase().trim() === 'SUDAH' ? 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-400 dark:border-emerald-800' : 'bg-orange-50 text-orange-700 border-orange-200 dark:bg-orange-900/30 dark:text-orange-400 dark:border-orange-800'}`}>
-                                                                    {colData.toUpperCase().trim()}
-                                                                </span>
-                                                            ) : (
-                                                                <div className="flex items-center">
-                                                                    {colData}
-                                                                    {isWarning && (
-                                                                        <div className="relative group ml-2 flex items-center">
-                                                                            <i className="fas fa-clock text-amber-500 animate-pulse text-base cursor-help"></i>
-                                                                            <span className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 w-max px-2 py-1 bg-slate-800 text-white text-[10px] font-semibold rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
-                                                                                Data lebih dari 120 hari
-                                                                            </span>
-                                                                        </div>
-                                                                    )}
-                                                                </div>
-                                                            )}
-                                                        </td>
-                                                    );
-                                                })}
-                                            </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
-                            </div>
-                        )}
-                    </section>
+                    </div>
                 </div>
             );
         }
